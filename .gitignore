@@ -26,3 +26,6 @@ Thumbs.db
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Credentials (don't commit passwords!)
+include/config.h

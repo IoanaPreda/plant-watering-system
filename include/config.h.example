@@ -1,0 +1,42 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+// ==========================================
+// WiFi Configuration
+// ==========================================
+#define WIFI_SSID "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+
+// ==========================================
+// MQTT Broker Configuration
+// ==========================================
+// For HiveMQ Cloud (Free tier):
+// 1. Go to: https://console.hivemq.cloud/
+// 2. Create a free cluster
+// 3. Copy your broker URL and credentials here
+
+#define MQTT_SERVER "your-broker.hivemq.cloud"  // e.g., "abc123.s1.eu.hivemq.cloud"
+#define MQTT_PORT 8883                           // Use 8883 for SSL/TLS, 1883 for non-SSL
+#define MQTT_USER "your_mqtt_username"
+#define MQTT_PASSWORD "your_mqtt_password"
+
+// ==========================================
+// Setup Instructions:
+// ==========================================
+// 1. Copy this file to config.h:
+//    cp include/config.h.example include/config.h
+// 2. Edit config.h with your actual credentials
+// 3. config.h is in .gitignore (won't be committed)
+//
+// MQTT Topics used:
+// - plant/moisture          → Sensor readings (published by ESP32)
+// - plant/relay/command     → Control commands (subscribed by ESP32)
+// - plant/relay/state       → Relay state (published by ESP32)
+// - plant/status            → System status (published by ESP32)
+//
+// Commands you can send to plant/relay/command:
+// - "on" or "1" or "true"   → Turn relay ON
+// - "off" or "0" or "false" → Turn relay OFF
+// - "toggle"                → Toggle relay state
+
+#endif // CONFIG_H
