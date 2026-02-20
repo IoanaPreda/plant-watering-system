@@ -31,7 +31,6 @@ fun PlantWateringApp(mqttManager: MqttManager) {
     var relayState by remember { mutableStateOf("OFF") }
     var isConnected by remember { mutableStateOf(false) }
 
-    // Setup MQTT listener
     LaunchedEffect(Unit) {
         mqttManager.setMessageCallback { topic, message ->
             when (topic) {
@@ -49,12 +48,14 @@ fun PlantWateringApp(mqttManager: MqttManager) {
             }
         }
 
-        // Connect to MQTT
+        mqttManager.onConnected {
+            mqttManager.subscribe("plant/moisture")
+            mqttManager.subscribe("plant/relay/state")
+            mqttManager.subscribe("plant/status")
+            isConnected = true
+        }
+
         mqttManager.connect(BuildConfig.MQTT_USERNAME, BuildConfig.MQTT_PASSWORD)
-        mqttManager.subscribe("plant/moisture")
-        mqttManager.subscribe("plant/relay/state")
-        mqttManager.subscribe("plant/status")
-        isConnected = true
     }
 
     Column(
