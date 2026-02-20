@@ -17,8 +17,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val brokerUrl = "tcp://your-broker.hivemq.cloud:1883"
-        mqttManager = MqttManager(brokerUrl, "AndroidClient")
+        mqttManager = MqttManager(BuildConfig.MQTT_BROKER_URL, "AndroidClient")
 
         setContent {
             PlantWateringApp(mqttManager)
@@ -51,7 +50,7 @@ fun PlantWateringApp(mqttManager: MqttManager) {
         }
 
         // Connect to MQTT
-        mqttManager.connect("your_username", "your_password")
+        mqttManager.connect(BuildConfig.MQTT_USERNAME, BuildConfig.MQTT_PASSWORD)
         mqttManager.subscribe("plant/moisture")
         mqttManager.subscribe("plant/relay/state")
         mqttManager.subscribe("plant/status")

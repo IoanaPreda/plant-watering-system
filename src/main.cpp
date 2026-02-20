@@ -12,8 +12,8 @@ constexpr uint8_t RELAY_ON  = HIGH;
 constexpr uint8_t RELAY_OFF = LOW;
 
 // Moisture calibration
-const int DRY = 2600;
-const int WET = 1100;
+const int WET = 2600;
+const int DRY = 1100;
 
 // MQTT topics
 const char* TOPIC_MOISTURE = "plant/moisture";

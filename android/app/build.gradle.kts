@@ -1,7 +1,14 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+}
+
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) load(f.inputStream())
 }
 
 android {
@@ -16,6 +23,10 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "MQTT_BROKER_URL", "\"${localProps.getProperty("mqtt.broker.url", "")}\"")
+        buildConfigField("String", "MQTT_USERNAME", "\"${localProps.getProperty("mqtt.username", "")}\"")
+        buildConfigField("String", "MQTT_PASSWORD", "\"${localProps.getProperty("mqtt.password", "")}\"")
     }
 
     buildTypes {
@@ -36,6 +47,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
