@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include "config.h"
 
@@ -12,8 +13,8 @@ constexpr uint8_t RELAY_ON  = HIGH;
 constexpr uint8_t RELAY_OFF = LOW;
 
 // Moisture calibration
-const int WET = 2600;
-const int DRY = 1100;
+const int DRY = 2600;
+const int WET = 1100;
 
 // MQTT topics
 const char* TOPIC_MOISTURE = "plant/moisture";
@@ -26,7 +27,7 @@ unsigned long lastPublish = 0;
 const unsigned long PUBLISH_INTERVAL = 10000; // 10 seconds
 
 // WiFi and MQTT clients
-WiFiClient espClient;
+WiFiClientSecure espClient;
 PubSubClient mqtt(espClient);
 
 // State tracking
@@ -58,7 +59,8 @@ void setup() {
   // 4) Connect to WiFi
   setupWiFi();
   
-  // 5) Setup MQTT
+  // 5) Setup MQTT (HiveMQ Cloud requires TLS on port 8883)
+  espClient.setInsecure();
   mqtt.setServer(MQTT_SERVER, MQTT_PORT);
   mqtt.setCallback(mqttCallback);
   
