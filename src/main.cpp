@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
+#include <esp_task_wdt.h>
 #include "config.h"
 
 // Hardware pins
@@ -12,9 +13,9 @@
 constexpr uint8_t RELAY_ON  = HIGH;
 constexpr uint8_t RELAY_OFF = LOW;
 
-// Moisture calibration
-const int DRY = 2600;
-const int WET = 1100;
+// Moisture calibration (raw ADC values)
+const int WET = 1100;   // sensor in water
+const int DRY = 2580;   // sensor in air
 
 // MQTT topics
 const char* TOPIC_MOISTURE = "plant/moisture";
@@ -25,6 +26,12 @@ const char* TOPIC_STATUS = "plant/status";
 // Timing
 unsigned long lastPublish = 0;
 const unsigned long PUBLISH_INTERVAL = 10000; // 10 seconds
+unsigned long lastMqttAttempt = 0;
+const unsigned long MQTT_RETRY_INTERVAL = 5000;
+unsigned long lastWifiCheck = 0;
+const unsigned long WIFI_CHECK_INTERVAL = 10000;
+int mqttFailCount = 0;
+const int MAX_MQTT_FAILS = 60; // reboot after ~5 minutes of failures
 
 // WiFi and MQTT clients
 WiFiClientSecure espClient;
@@ -35,8 +42,8 @@ bool relayState = false;
 int lastMoisture = 0;
 
 // Function prototypes
-void setupWiFi();
-void reconnectMQTT();
+void ensureWiFi();
+bool tryConnectMQTT();
 void mqttCallback(char* topic, byte* payload, unsigned int length);
 int readMoistureAvg(int samples = 20);
 int moisturePercent(int raw);
@@ -44,73 +51,31 @@ void setRelay(bool state);
 void publishStatus();
 
 void setup() {
-  // 1) Safety first - turn off relay
   pinMode(RELAY_PIN, OUTPUT);
   digitalWrite(RELAY_PIN, RELAY_OFF);
   
-  // 2) Initialize serial
   Serial.begin(115200);
   delay(1000);
   Serial.println("\n\n=== Plant Watering System with MQTT ===");
   
-  // 3) Configure analog reading
+  // Watchdog: auto-reboot if loop() hangs for 30s
+  esp_task_wdt_init(30, true);
+  esp_task_wdt_add(NULL);
+  
   analogSetAttenuation(ADC_11db);
   
-  // 4) Connect to WiFi
-  setupWiFi();
-  
-  // 5) Setup MQTT (HiveMQ Cloud requires TLS on port 8883)
-  espClient.setInsecure();
-  mqtt.setServer(MQTT_SERVER, MQTT_PORT);
-  mqtt.setCallback(mqttCallback);
-  
-  Serial.println("Setup complete. System ready.");
-  Serial.println("================\n");
-}
-
-void loop() {
-  // Ensure MQTT connection
-  if (!mqtt.connected()) {
-    reconnectMQTT();
-  }
-  mqtt.loop();
-  
-  // Publish sensor data periodically
-  unsigned long now = millis();
-  if (now - lastPublish >= PUBLISH_INTERVAL) {
-    lastPublish = now;
-    
-    // Read moisture sensor
-    int raw = readMoistureAvg(30);
-    int moisture = moisturePercent(raw);
-    lastMoisture = moisture;
-    
-    // Publish moisture data
-    char msg[50];
-    snprintf(msg, 50, "{\"moisture\":%d,\"raw\":%d}", moisture, raw);
-    mqtt.publish(TOPIC_MOISTURE, msg, true); // retained
-    
-    Serial.printf("📊 Published: Moisture=%d%% (raw=%d)\n", moisture, raw);
-    
-    // Publish system status
-    publishStatus();
-  }
-  
-  delay(100);
-}
-
-void setupWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting to WiFi: ");
   Serial.println(WIFI_SSID);
-  
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+
+  // Wait up to 15s for initial WiFi (non-fatal if it fails)
+  unsigned long wifiStart = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 15000) {
     delay(500);
     Serial.print(".");
-    attempts++;
+    esp_task_wdt_reset();
   }
   
   if (WiFi.status() == WL_CONNECTED) {
@@ -118,36 +83,94 @@ void setupWiFi() {
     Serial.print("   IP address: ");
     Serial.println(WiFi.localIP());
   } else {
-    Serial.println("\n❌ WiFi connection failed!");
+    Serial.println("\n⚠️  WiFi not ready yet, will keep retrying...");
   }
+  
+  espClient.setInsecure();
+  mqtt.setServer(MQTT_SERVER, MQTT_PORT);
+  mqtt.setCallback(mqttCallback);
+  mqtt.setKeepAlive(60);
+  
+  Serial.println("Setup complete. System ready.");
+  Serial.println("================\n");
 }
 
-void reconnectMQTT() {
-  while (!mqtt.connected()) {
-    Serial.print("Connecting to MQTT broker...");
+void loop() {
+  esp_task_wdt_reset();
+  unsigned long now = millis();
+
+  ensureWiFi();
+
+  if (!mqtt.connected()) {
+    if (now - lastMqttAttempt >= MQTT_RETRY_INTERVAL) {
+      lastMqttAttempt = now;
+      if (!tryConnectMQTT()) {
+        mqttFailCount++;
+        if (mqttFailCount >= MAX_MQTT_FAILS) {
+          Serial.println("Too many MQTT failures, rebooting...");
+          delay(1000);
+          ESP.restart();
+        }
+      }
+    }
+  } else {
+    mqttFailCount = 0;
+  }
+
+  mqtt.loop();
+
+  if (now - lastPublish >= PUBLISH_INTERVAL) {
+    lastPublish = now;
     
-    // Create a unique client ID
-    String clientId = "ESP32Plant-";
-    clientId += String(random(0xffff), HEX);
+    int raw = readMoistureAvg(30);
+    int moisture = moisturePercent(raw);
+    lastMoisture = moisture;
     
-    // Attempt to connect
-    if (mqtt.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD)) {
-      Serial.println(" connected!");
-      
-      // Subscribe to command topic
-      mqtt.subscribe(TOPIC_RELAY_CMD);
-      Serial.printf("   Subscribed to: %s\n", TOPIC_RELAY_CMD);
-      
-      // Publish online status
-      mqtt.publish(TOPIC_STATUS, "{\"status\":\"online\"}", true);
-      
+    if (mqtt.connected()) {
+      char msg[50];
+      snprintf(msg, 50, "{\"moisture\":%d,\"raw\":%d}", moisture, raw);
+      mqtt.publish(TOPIC_MOISTURE, msg, true);
+      publishStatus();
+      Serial.printf("📊 Published: Moisture=%d%% (raw=%d)\n", moisture, raw);
     } else {
-      Serial.print(" failed, rc=");
-      Serial.print(mqtt.state());
-      Serial.println(" retrying in 5 seconds...");
-      delay(5000);
+      Serial.printf("📊 Read: Moisture=%d%% (raw=%d) [offline]\n", moisture, raw);
     }
   }
+  
+  delay(100);
+}
+
+void ensureWiFi() {
+  if (WiFi.status() == WL_CONNECTED) return;
+
+  unsigned long now = millis();
+  if (now - lastWifiCheck < WIFI_CHECK_INTERVAL) return;
+  lastWifiCheck = now;
+
+  Serial.println("WiFi disconnected, reconnecting...");
+  WiFi.disconnect();
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+}
+
+bool tryConnectMQTT() {
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  Serial.print("Connecting to MQTT broker...");
+
+  String clientId = "ESP32Plant-";
+  clientId += String((uint32_t)(ESP.getEfuseMac() & 0xFFFF), HEX);
+
+  if (mqtt.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD)) {
+    Serial.println(" connected!");
+    mqttFailCount = 0;
+    mqtt.subscribe(TOPIC_RELAY_CMD);
+    Serial.printf("   Subscribed to: %s\n", TOPIC_RELAY_CMD);
+    mqtt.publish(TOPIC_STATUS, "{\"status\":\"online\"}", true);
+    return true;
+  }
+
+  Serial.printf(" failed, rc=%d\n", mqtt.state());
+  return false;
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
@@ -201,7 +224,7 @@ int readMoistureAvg(int samples) {
 
 int moisturePercent(int raw) {
   raw = constrain(raw, WET, DRY);
-  return map(raw, DRY, WET, 0, 100);
+  return map(raw, WET, DRY, 100, 0);
 }
 
 void publishStatus() {
