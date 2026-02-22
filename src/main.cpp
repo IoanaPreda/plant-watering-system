@@ -41,6 +41,11 @@ PubSubClient mqtt(espClient);
 bool relayState = false;
 int lastMoisture = 0;
 
+// Pump timing
+unsigned long pumpLastOnTime = 0;
+unsigned long pumpLastDuration = 0;
+bool pumpEverOn = false;
+
 // Function prototypes
 void ensureWiFi();
 bool tryConnectMQTT();
@@ -160,7 +165,8 @@ bool tryConnectMQTT() {
   String clientId = "ESP32Plant-";
   clientId += String((uint32_t)(ESP.getEfuseMac() & 0xFFFF), HEX);
 
-  if (mqtt.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD)) {
+  if (mqtt.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD,
+                   TOPIC_STATUS, 1, true, "{\"status\":\"offline\"}")) {
     Serial.println(" connected!");
     mqttFailCount = 0;
     mqtt.subscribe(TOPIC_RELAY_CMD);
@@ -205,12 +211,19 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 void setRelay(bool state) {
+  if (state && !relayState) {
+    pumpLastOnTime = millis();
+    pumpEverOn = true;
+  } else if (!state && relayState && pumpEverOn) {
+    pumpLastDuration = (millis() - pumpLastOnTime) / 1000;
+  }
+
   relayState = state;
   digitalWrite(RELAY_PIN, state ? RELAY_ON : RELAY_OFF);
-  
-  // Publish relay state
+
   const char* stateStr = state ? "ON" : "OFF";
-  mqtt.publish(TOPIC_RELAY_STATE, stateStr, true); // retained
+  mqtt.publish(TOPIC_RELAY_STATE, stateStr, true);
+  publishStatus();
 }
 
 int readMoistureAvg(int samples) {
@@ -228,12 +241,22 @@ int moisturePercent(int raw) {
 }
 
 void publishStatus() {
-  char msg[100];
-  snprintf(msg, 100, 
-    "{\"moisture\":%d,\"relay\":\"%s\",\"uptime\":%lu}",
+  unsigned long pumpOnAgo = 0;
+  unsigned long pumpRun = 0;
+  if (pumpEverOn) {
+    pumpOnAgo = (millis() - pumpLastOnTime) / 1000;
+    pumpRun = relayState ? pumpOnAgo : pumpLastDuration;
+  }
+
+  char msg[200];
+  snprintf(msg, 200,
+    "{\"moisture\":%d,\"relay\":\"%s\",\"uptime\":%lu,\"pumpLastOnAgo\":%lu,\"pumpRunSecs\":%lu,\"pumpEverOn\":%d}",
     lastMoisture,
     relayState ? "ON" : "OFF",
-    millis() / 1000
+    millis() / 1000,
+    pumpOnAgo,
+    pumpRun,
+    pumpEverOn ? 1 : 0
   );
   mqtt.publish(TOPIC_STATUS, msg, true);
 }
