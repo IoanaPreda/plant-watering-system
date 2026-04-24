@@ -32,6 +32,7 @@ unsigned long lastWifiCheck = 0;
 const unsigned long WIFI_CHECK_INTERVAL = 10000;
 int mqttFailCount = 0;
 const int MAX_MQTT_FAILS = 60; // reboot after ~5 minutes of failures
+const unsigned long MAX_PUMP_DURATION = 10000; // 10 seconds max
 
 // WiFi and MQTT clients
 WiFiClientSecure espClient;
@@ -120,6 +121,12 @@ void loop() {
     }
   } else {
     mqttFailCount = 0;
+  }
+
+  // Auto-shutoff: kill pump if it's been on too long
+  if (relayState && (now - pumpLastOnTime >= MAX_PUMP_DURATION)) {
+    Serial.println("⛔ Pump max duration reached, shutting off!");
+    setRelay(false);
   }
 
   mqtt.loop();
