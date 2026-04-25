@@ -1,180 +1,109 @@
-# 🌱 Plant Watering System
+# Plant watering system
 
-ESP32-based automated plant watering system with remote control via Android app using MQTT.
+ESP32 firmware and an Android companion app for remote soil-moisture monitoring and pump control over MQTT. A cloud broker (for example [HiveMQ Cloud](https://www.hivemq.com/mqtt-cloud-broker/)) lets the phone and device talk without opening your home network.
 
-## 📋 Features
-
-- ✅ **Remote Control**: Control water pump from anywhere via Android app
-- ✅ **Real-time Monitoring**: View soil moisture levels remotely
-- ✅ **MQTT Protocol**: Internet-based communication (works outside home WiFi)
-- ✅ **Safety First**: Relay starts in OFF state for battery safety
-- ✅ **Free Cloud**: Uses HiveMQ Cloud (free tier)
-
-## 🔧 Hardware Components
-
-- **ESP32 DevKit V1** (ESP-WROOM-32)
-- **Capacitive Soil Moisture Sensor** (GPIO 32)
-- **Relay Module** (GPIO 16) - Controls water pump
-- **Water Pump** (5-12V DC)
-- **Power Supply** (for pump)
-
-### Circuit Connections
-```
-ESP32 GPIO 32  →  Moisture Sensor (Analog Out)
-ESP32 GPIO 16  →  Relay Module (IN)
-Relay Module   →  Water Pump (NO & COM terminals)
-```
-
-## 🚀 Quick Start
-
-### 1. Setup PlatformIO Project
-```bash
-cd plant-watering-system
-# PlatformIO will auto-install dependencies from platformio.ini
-```
-
-### 2. Configure WiFi & MQTT
-Edit `include/config.h`:
-```cpp
-#define WIFI_SSID "YourWiFi"
-#define WIFI_PASSWORD "YourPassword"
-#define MQTT_SERVER "your-broker.hivemq.cloud"
-#define MQTT_USER "your_username"
-#define MQTT_PASSWORD "your_password"
-```
-
-See [ANDROID_APP_SETUP.md](ANDROID_APP_SETUP.md) for HiveMQ Cloud setup.
-
-### 3. Upload to ESP32
-```bash
-pio run --target upload
-pio device monitor  # View serial output
-```
-
-### 4. Setup Android App
-Install **MQTT Dash** from Google Play Store and configure connection.  
-Full instructions: [ANDROID_APP_SETUP.md](ANDROID_APP_SETUP.md)
-
-## 📱 Android App Control
-
-### MQTT Topics
-
-**Subscribe to these** (ESP32 publishes):
-- `plant/moisture` - Soil moisture percentage (every 10s)
-- `plant/relay/state` - Pump ON/OFF state
-- `plant/status` - Full system status
-
-**Publish to these** (control ESP32):
-- `plant/relay/command` - Send `on`, `off`, or `toggle`
-
-## 📂 Project Structure
+## Architecture
 
 ```
-plant-watering-system/
-├── platformio.ini           # PlatformIO config & libraries
-├── include/
-│   └── config.h            # WiFi & MQTT credentials (EDIT THIS)
-├── src/
-│   ├── main.cpp            # Main MQTT-enabled code
-│   ├── test_relay.cpp      # Relay testing utility
-│   └── test_sensor.cpp.bak # Sensor calibration
-├── lib/                    # Custom libraries (if any)
-├── test/                   # Unit tests
-├── ANDROID_APP_SETUP.md    # Android app guide
-└── README.md              # This file
+Phone (Android)  ←→  MQTT broker (internet)  ←→  ESP32 (home Wi‑Fi)
 ```
 
-## 🧪 Testing Components
+## Capabilities
 
-### Test Relay (Safety First!)
-```bash
-# Edit platformio.ini: change main.cpp to test_relay.cpp in build
-pio run --target upload
-pio device monitor
-# Commands: on, off, test, status
+- Remote pump control and soil moisture readouts over MQTT
+- JSON telemetry on fixed topics (see [MQTT interface](#mqtt-interface))
+- TLS to the broker on the ESP32 (configurable port)
+- Watchdog and maximum pump-on duration in firmware
+
+## Hardware
+
+| Item | Suggested notes |
+|------|------------------|
+| **MCU** | ESP32 DevKit-class board (e.g. ESP-WROOM-32, `esp32doit-devkit-v1` in PlatformIO) |
+| **Soil sensor** | Capacitive analog soil moisture module (this project uses one analog output on GPIO 32) |
+| **Switching** | Relay module suitable for your pump; logic input on GPIO 16 |
+| **Pump** | Small DC pump (commonly 5–12 V); current and voltage must match the relay and supply |
+| **Power** | separate stable supply for the pump; do not run the motor from the ESP32 3.3 V/5 V pins |
+
+**Connections (this repository)**
+
+| ESP32 | Peripheral |
+|-------|------------|
+| GPIO 32 | Soil sensor analog out |
+| GPIO 16 | Relay signal input (coil or opto input per your module) |
+| GND | Common ground with sensor and relay, per your module’s wiring |
+| 3.3 V | Sensor VCC, if the module is 3.3 V compatible (many are) |
+
+**Wiring practice:** Keep low-voltage logic and high-current pump paths separate. Use a relay rated for the pump’s voltage and current. If the pump is powered from mains (via a pump controller), follow local electrical rules; this README assumes a low-voltage DC pump for hobby use.
+
+**Moisture scaling:** Raw ADC and “percent wet” depend on the sensor, soil, and supply. The firmware uses two constants, `WET` and `DRY`, in `src/main.cpp` (see `readMoistureAvg` / `moisturePercent`). Calibrate for your setup: read the raw value in very wet soil and in dry/air, then set `WET` to the wet reading and `DRY` to the dry reading so the map matches your environment.
+
+**Relay test sketch:** `test/test_relay.cpp` is a minimal serial-driven relay check. To use it, temporarily build that code as the only application in `src/` (for example back up `main.cpp` and copy the test file to `src/main.cpp`), then restore `main.cpp` for normal operation.
+
+## Firmware (ESP32)
+
+**Requirements:** [PlatformIO](https://docs.platformio.org/) (VS Code extension or CLI).
+
+1. **Configuration**  
+   Copy `include/config.h.example` to `include/config.h` and set Wi-Fi and broker variables. The example file lists the required symbols.
+
+2. **Build and upload**
+   ```bash
+   pio run --target upload
+   ```
+3. **Serial log** (115200 baud; the serial port is auto-detected by PlatformIO when possible)
+   ```bash
+   pio device monitor
+   ```
+
+**Broker:** Create a cluster and credentials in your provider’s console. Set `MQTT_SERVER`, `MQTT_PORT` (e.g. `8883` for TLS), `MQTT_USER`, and `MQTT_PASSWORD` to match. The stock firmware uses TLS (`WiFiClientSecure`) and `setInsecure()` for typical public broker hostnames; align your broker policy with that.
+
+**Wi-Fi:** The ESP32 works on 2.4 GHz networks; it does not use 5 GHz Wi-Fi.
+
+## Android app
+
+The app lives under `android/`. It is a Kotlin/Compose project using Eclipse Paho. Broker URL and credentials are injected at build time from `local.properties` in the `android/` directory (this file is not committed).
+
+Create `android/local.properties` with at least:
+
+```properties
+sdk.dir=/path/to/Android/sdk
+mqtt.broker.url=ssl://your-cluster.s1.eu.hivemq.cloud:8883
+mqtt.username=your_mqtt_user
+mqtt.password=your_mqtt_password
 ```
 
-### Test Moisture Sensor
-Use `test_sensor.cpp.bak` to calibrate your sensor (DRY/WET values).
+Use a broker URL and port that match the ESP32 configuration (`ssl://` and port `8883` for TLS, consistent with a typical HiveMQ setup). Open the `android` folder in Android Studio and run the app; minimum SDK in the project is 24.
 
-## 🔐 Security Notes
+## MQTT interface
 
-- **Keep `config.h` private** - Don't commit credentials to public repos
-- Add `include/config.h` to `.gitignore` if sharing code
-- Use SSL/TLS (port 8883) for production
-- Create strong MQTT passwords
+**Subscribe (ESP32 publishes)**
 
-## 🌐 Remote Access
+| Topic | Content |
+|-------|---------|
+| `plant/moisture` | JSON, e.g. `{"moisture":65,"raw":1850}` (about every 10 s) |
+| `plant/relay/state` | `ON` or `OFF` |
+| `plant/status` | JSON with moisture, relay, uptime, and pump-related fields |
 
-This system works from **anywhere** because:
-1. ESP32 connects to your home WiFi
-2. ESP32 connects to HiveMQ Cloud (internet MQTT broker)
-3. Your Android phone connects to same broker (via mobile data or any WiFi)
-4. Broker relays messages between ESP32 and phone
+**Publish (control the ESP32)**
 
-No port forwarding or complex networking required! ✨
+| Topic | Payload |
+|-------|---------|
+| `plant/relay/command` | `on`, `off`, or `toggle` (also accepted: `1`/`0`, `true`/`false` for on/off) |
 
-## 📊 Monitoring
+## Troubleshooting
 
-View real-time logs via serial monitor:
-```bash
-pio device monitor -b 115200
-```
+- **No Wi-Fi:** Check SSID/password, 2.4 GHz, and range.
+- **No MQTT from the ESP32:** Confirm broker host, port, and credentials; verify the cluster allows your connection and that TLS settings match.
+- **App shows no data:** Broker URL, user, and password in `local.properties` must match the device; topic names are case-sensitive.
+- **Commands ignored:** Send to `plant/relay/command` with a supported payload; watch the serial log for received lines.
 
-Expected output:
-```
-=== Plant Watering System with MQTT ===
-✅ WiFi connected!
-   IP address: 192.168.1.100
-Connecting to MQTT broker... connected!
-📊 Published: Moisture=45% (raw=1980)
-📥 Received [plant/relay/command]: on
-💧 Relay turned ON (watering)
-```
+## Safety
 
-## 🛠️ Dependencies
+- Bench-test relay behavior **without** the pump connected first.
+- Protect electronics from moisture; strain-relief and isolate high-current wiring from the dev board.
+- Supervise the first watering runs; unattended automation carries flooding and equipment risk.
 
-Auto-installed via PlatformIO:
-- `PubSubClient` (MQTT client)
-- `ArduinoJson` (JSON parsing)
-- `WiFi` (built-in ESP32)
+## Contributing
 
-## 📚 Documentation
-
-- [Android App Setup Guide](ANDROID_APP_SETUP.md)
-- [HiveMQ Cloud Docs](https://docs.hivemq.com/)
-- [PlatformIO Docs](https://docs.platformio.org/)
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit changes (`git commit -m 'Add AmazingFeature'`)
-4. Push to branch (`git push origin feature/AmazingFeature`)
-5. Open Pull Request
-
-## 📄 License
-
-This project is open source and available under the [MIT License](LICENSE).
-
-## ⚠️ Safety Warning
-
-- Test relay control WITHOUT water pump connected first
-- Ensure proper waterproofing for electronics
-- Use appropriate power supply for your pump
-- Monitor first watering cycles closely
-- Don't leave system unattended until fully tested
-
-## 💡 Future Enhancements
-
-- [ ] Auto-watering based on moisture threshold
-- [ ] Multiple plant support
-- [ ] Battery level monitoring
-- [ ] Historical data logging
-- [ ] Push notifications
-- [ ] Weather API integration
-- [ ] Home Assistant integration
-
----
-
-Made with ❤️ for plants
+Pull requests and issues are welcome. Keep changes focused; match existing style in firmware and Android code.
