@@ -103,3 +103,7 @@ Use a broker URL and port that match the ESP32 configuration (`ssl://` and port 
 - Bench-test relay behavior **without** the pump connected first.
 - Protect electronics from moisture; strain-relief and isolate high-current wiring from the dev board.
 - Supervise the first watering runs; unattended automation carries flooding and equipment risk.
+
+## License
+
+Released under the [MIT License](LICENSE).
